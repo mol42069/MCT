@@ -46,6 +46,8 @@ array DCB 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
 counter DCB 0
 side DCB 0
 number DCB 0
+stop DCB 0
+resetpressed DCB 0
 ; ------------------------------- Codesection / Programm ------------------------------------
 	AREA	main_s,code
 	
@@ -59,7 +61,7 @@ TIM6_IRQHandler PROC				; 100ms counter
 	
 	; hochzählen
 	
-	ldr r0, =counter
+	ldr r0, =counter			; wir addieren zu counter 1 -> 100 ms sind vergangen -> auf display + 0.1
 	ldrb r1, [r0]
 	add r1, #1
 	str r1, [r0]
@@ -91,6 +93,29 @@ Tim_isone
 	mov r1, #0				; wenn side 0 ist machen wir side zu 1 und gehen zurück
 	str r1, [r0]
 	
+	ldr r0, =stop
+	ldrb r1, [r0]
+	cmp r1, #1				; stop = 1 -> stop | stop = 0 -> start
+	beq stopped
+	b started
+	
+stopped
+							; wenn timer gestopt ist machen wir timer 6 "aus"
+	ldr r7, =TIM6_DIER
+	mov r8, #0
+	str r8, [r7]
+	
+started
+							; wenn timer gestopt ist machen wir timer 6 "an" 
+	ldr r7, =TIM6_DIER
+	mov r8, #1
+	str r8, [r7]
+	
+
+	bl switch
+	
+	bl up_display
+	
 	bx lr
 	
 	ENDP
@@ -116,8 +141,10 @@ loop_delay
 ; ---------------------------------------  up_display ----------------------------------------
 
 up_display PROC
+	
 	; r0 = zahl
 	; r1 = welches display
+	
 	PUSH {r0, r1, r2, r5, r6}
 	
 	ldr r6, =number
@@ -136,6 +163,7 @@ up_display PROC
 	add r5, #0x80
 	
 rechts
+
 	str r5, [r2]			; wenn r1 = 0 überspringen wir das addieren
 	
 	pop {r0, r1, r2, r5, r6}
@@ -161,23 +189,22 @@ switch PROC
 	b continue				; ansonsten haben wir die 10er stelle bereits und sind fertig
 
 r1is1
+
 	mul r0, r10				; wir berechnen die einzerstelle da r1 = 1
 	sub r0, r2, r0
 
 continue
 	
-	ldr r3, =number
+	ldr r3, =number			; wir speichern die berechnete "numer"
 	str r0, [r3]
 	
 	bx lr
 	
 	ENDP
-		
-; ---------------------------------------  up_display ----------------------------------------
-
 
 		
 ; -----------------------------------  Einsprungpunkt - --------------------------------------
+
 
 main PROC
 
@@ -191,10 +218,14 @@ main PROC
 	bl stop_loop
 
 startpol
+
+	ldr r0, =resetpressed	; wir setzen resetpressed wieder auf 0
+	ldr r1, =0
+	str r1, [r0]
 	
-	ldr r7, =TIM6_DIER
-	mov r8, #1
-	str r8, [r7]
+	ldr r0, =stop			; wir setzen sopt auf 0
+	ldr r1, =0
+	str r1, [r0]
 	
 loop						; wiederholter Anwendungscode
 	
@@ -204,25 +235,13 @@ loop						; wiederholter Anwendungscode
 	cmp r6, #0x2			; if px1 pressed -> stop -> gehe zum stop_loop
 	bne stop_loop
 	
-	
-	
-	bl switch				; aufrufen des switch
-	
-	bl up_display			; aufrufen des displays
-	
-	cmp r2, #99				; wir checken ob wir bei 10s sind also wieder bei 00
-	beq reset
 
    B	loop	
   
-addition					; wir vergrößern r2, da 100 ms vergangen sind
-	ldr r3, =10
-	add r2, #1
-	bx lr	
 	
 reset 
 	ldr r2, =0
-	ldr r3, =counter
+	ldr r3, =counter		; wir reseten den counter 
 	str r2, [r3]
 	
 	bx lr
@@ -230,10 +249,13 @@ reset
 	
 stop_loop
 
-	ldr r7, =TIM6_DIER
-	mov r8, #0
-	str r8, [r7]
+	ldr r0, =stop			; wir speichern das wir der timer gestoppt ist
+	ldr r1, =1
+	str r1, [r0]
 	
+	
+; ---------------------------------------  stop loop ----------------------------------------
+
 	
 s_loop	
 
@@ -244,9 +266,10 @@ s_loop
 	bne startpol
 	and r6, r5, #0x4
 	
-
-	bl switch				; aufrufen des switch
-	bl up_display			; aufrufen des displays
+	ldr r0, =resetpressed	; wir skippen den reset wenn wir bereits reset gedrückt haben
+	ldrb r1, [r0]
+	cmp r1, #1
+	beq s_loop
 	
 	cmp r6, #0x4
 	bne s_reset				; wenn px2 gedrückt wurde 
@@ -254,8 +277,12 @@ s_loop
 	b s_loop
 	
 s_reset						; wir reseten bei reset button press
+	ldr r0, =resetpressed	; wir speichern das wir bereits geresettet haben
+	ldr r1, =1
+	str r1, [r0]
+	
 	ldr r2, =0
-	ldr r3, =counter
+	ldr r3, =counter		
 	str r2, [r3]
 	
 	b s_loop
@@ -293,7 +320,7 @@ initialize PROC
 	ldr r1, =0x6F7F
 	str r1, [r0, #8]
 	
-	ldr r0, =counter			; wir initialisieren counter und side
+	ldr r0, =counter			; wir initialisieren variablen
 	mov r1, #0
 	ldr r1, [r0]
 	
@@ -302,6 +329,14 @@ initialize PROC
 	ldr r1, [r0]
 	
 	ldr r0, =number
+	mov r1, #0
+	ldr r1, [r0]
+	
+	ldr r0, =stop
+	mov r1, #0
+	ldr r1, [r0]
+	
+	ldr r0, =resetpressed
 	mov r1, #0
 	ldr r1, [r0]
 	
