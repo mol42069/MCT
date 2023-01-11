@@ -1,11 +1,11 @@
 ; ========================================================================================
 ; | Modulname:   main.s                                   | Prozessor:  STM32G474        |
 ; |--------------------------------------------------------------------------------------|
-; | Ersteller:   Peter Raab                               | Datum:  03.09.2021           |
+; | Ersteller:   Bodibileg Batdorj, Moritz Weber          | Datum:  22.12.2022           |
 ; |--------------------------------------------------------------------------------------|
-; | Version:     V1.0            | Projekt:               | Assembler:  ARM-ASM          |
+; | Version:     V2.3            | Projekt:    Stoppuhr   | Assembler:  ARM-ASM          |
 ; |--------------------------------------------------------------------------------------|
-; | Aufgabe:     Basisprojekt                                                            |
+; | Aufgabe:     Stoppuhr                                                            |
 ; |                                                                                      |
 ; |                                                                                      |
 ; |--------------------------------------------------------------------------------------|
@@ -55,11 +55,10 @@ resetpressed DCB 0
 ; ------------------------------------  TIM6 interupt ---------------------------------------
 
 TIM6_IRQHandler PROC				; 100ms counter
-	ldr r1, =TIM6_SR
+	
+	ldr r1, =TIM6_SR			; reseten des interrupt flags
 	mov r3, #0
 	str r3, [r1]
-	
-	; hochzählen
 	
 	ldr r0, =counter			; wir addieren zu counter 1 -> 100 ms sind vergangen -> auf display + 0.1
 	ldrb r1, [r0]
@@ -73,56 +72,52 @@ TIM6_IRQHandler PROC				; 100ms counter
 ; ------------------------------------  TIM7 interupt ---------------------------------------
 
 TIM7_IRQHandler PROC			; 10ms counter
-	ldr r1, =TIM7_SR
+	
+	ldr r1, =TIM7_SR			; reseten des interrupt flags
 	mov r3, #0
 	str r3, [r1]
 	
 	
-	ldr r0, =side
+	ldr r0, =side			; wir holen den wert aus der variable side
 	ldrb r1, [r0]
 	
 	cmp r1, #1
 	beq Tim_isone
 	
-	mov r1, #1				; wenn side 1 ist machen wir side zu 0 und gehen zurück
+	mov r1, #1				; if side = 1:  side = 0 
 	str r1, [r0]
-	bx lr
+	b skip_side
 	
 Tim_isone
 
-	mov r1, #0				; wenn side 0 ist machen wir side zu 1 und gehen zurück
+	mov r1, #0				; if side = 0:  side = 1 
+	
 	str r1, [r0]
 	
-	ldr r0, =stop
-	ldrb r1, [r0]
-	cmp r1, #1				; stop = 1 -> stop | stop = 0 -> start
-	beq stopped
-	b started
-	
-stopped
-							; wenn timer gestopt ist machen wir timer 6 "aus"
-	ldr r7, =TIM6_DIER
-	mov r8, #0
-	str r8, [r7]
-	
-started
-							; wenn timer gestopt ist machen wir timer 6 "an" 
-	ldr r7, =TIM6_DIER
-	mov r8, #1
-	str r8, [r7]
+skip_side
 	
 
+	push {lr}
+	
 	bl switch
 	
 	bl up_display
 	
+	pop {lr}
+	
 	bx lr
 	
 	ENDP
+		
 			
 ; ---------------------------------------  up_delay -----------------------------------------
+
+
+
 up_delay PROC
-	PUSH {r0, r1}		
+	
+	PUSH {r0, r1}
+	
 	mov r0, #10				; wieviele ms das delay sein soll
 	mov r1, #3600			; wieviele durchläufe 1 ms ist
 	mul r0, r0, r1			; wir rechnen die summe von durchläufen aus die wir machen müssen
@@ -134,11 +129,14 @@ loop_delay
 	bne loop_delay			; wir laufen durch den loop bis r0 = 0
 	
 	pop {r0, r1}
+	
 	bx lr
 	
 	ENDP
+		
 
 ; ---------------------------------------  up_display ----------------------------------------
+
 
 up_display PROC
 	
@@ -171,7 +169,9 @@ rechts
 	bx lr
 	ENDP
 		
+		
 ; -----------------------------------------  switch ------------------------------------------
+
 
 switch PROC
 	
@@ -208,12 +208,8 @@ continue
 
 main PROC
 
-   ; Initialisierungen
 	bl initialize
-	
-	ldr r3, =10
-	ldr r1, =0
-	ldr r2, =0
+
 	
 	bl stop_loop
 
@@ -224,8 +220,11 @@ startpol
 	str r1, [r0]
 	
 	ldr r0, =stop			; wir setzen sopt auf 0
-	ldr r1, =0
+	ldr r1, =1
 	str r1, [r0]
+	ldr r7, =TIM6_DIER
+	mov r8, #1
+	str r8, [r7]
 	
 loop						; wiederholter Anwendungscode
 	
@@ -235,6 +234,14 @@ loop						; wiederholter Anwendungscode
 	cmp r6, #0x2			; if px1 pressed -> stop -> gehe zum stop_loop
 	bne stop_loop
 	
+	push {r0, r1}
+	
+	ldr r0, =counter
+	ldrb r1, [r0]			; wir reseten den counter wenn wir bei 100 ankommen
+	cmp r1, #100
+	beq reset
+	
+	pop {r0, r1}
 
    B	loop	
   
@@ -250,45 +257,56 @@ reset
 stop_loop
 
 	ldr r0, =stop			; wir speichern das wir der timer gestoppt ist
-	ldr r1, =1
+	ldr r1, =0
 	str r1, [r0]
 	
+	ldr r7, =TIM6_DIER
+	mov r8, #0
+	str r8, [r7]
 	
-; ---------------------------------------  stop loop ----------------------------------------
+	
+; --------------------  stop loop --------------------		für das pollen von px1 und px2 währendem timer gestopt ist
 
 	
 s_loop	
 
-	ldr r4, =GPIOC_IDR
+	ldr r4, =GPIOC_IDR		; wir holen die werte der taster
 	ldr r5, [r4]
 	and r6, r5, #0x1
 	cmp r6, #0x1			; wenn px0 gedrückt wurde gehen wir wieder in den mainloop
 	bne startpol
-	and r6, r5, #0x4
+	
 	
 	ldr r0, =resetpressed	; wir skippen den reset wenn wir bereits reset gedrückt haben
 	ldrb r1, [r0]
 	cmp r1, #1
 	beq s_loop
 	
+	ldr r4, =GPIOC_IDR		; wir holen hier die werte der taster
+	ldr r5, [r4]
+	and r6, r5, #0x4
 	cmp r6, #0x4
-	bne s_reset				; wenn px2 gedrückt wurde 
+	bne s_reset				; wenn px2 gedrückt wurde reseten wir
 	
 	b s_loop
 	
 s_reset						; wir reseten bei reset button press
+
 	ldr r0, =resetpressed	; wir speichern das wir bereits geresettet haben
 	ldr r1, =1
 	str r1, [r0]
 	
-	ldr r2, =0
+	ldr r2, =0				; wir setzen den counter zurück auf 0
 	ldr r3, =counter		
 	str r2, [r3]
 	
 	b s_loop
 	
    ENDP
-	   ; ---------------------------------------  initialize ----------------------------------------
+	   
+	   
+; ---------------------------------------  initialize ----------------------------------------
+	   
 
 initialize PROC
 	
@@ -340,7 +358,7 @@ initialize PROC
 	mov r1, #0
 	ldr r1, [r0]
 	
-							; wir aktivieren timer 6 und 7		6 == 100ms; 7 == 10ms 
+							; wir aktivieren timer 6 und 7		6 = 100ms; 7 = 10ms 
 	ldr r0, =RCC_APB1ENR1
 	ldr r1, =0x30
 	str r1, [r0]
@@ -386,7 +404,7 @@ initialize PROC
 	str r1, [r0]
 	
 	ldr r0, =TIM6_DIER
-	mov r1, #1
+	mov r1, #0
 	str r1, [r0]
 	
 	ldr r0, =TIM7_DIER
